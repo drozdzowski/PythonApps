@@ -1,3 +1,27 @@
+# --- Fetch Weather Data ---
+# --- Fetch Player Stats ---
+def fetch_team_player_stats():
+    """Fetch player stats for each EPL team from football-data.org API."""
+    API_KEY = "fe0d30ce7478494a9222ff4877b9449e"
+    url = "https://api.football-data.org/v4/competitions/PL/scorers"
+    headers = {"X-Auth-Token": API_KEY}
+    team_players = {}
+    try:
+        resp = requests.get(url, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            for scorer in data.get("scorers", []):
+                team = scorer["team"]["name"]
+                player = scorer["player"]["name"]
+                goals = scorer["goals"]
+                if team not in team_players:
+                    team_players[team] = []
+                team_players[team].append({"name": player, "goals": goals})
+        else:
+            print("Error fetching player stats:", resp.text)
+    except Exception as e:
+        print("Exception fetching player stats:", e)
+    return team_players
 import math
 """
 Soccer Score Predictor - English Premier League
@@ -92,46 +116,50 @@ def weighted_mean(arr, weights=None, default=1):
     m = np.average(arr, weights=weights)
     return m if not math.isnan(m) else default
 
-def predict_score(home, away, team_stats, head_to_head):
-    """Improved prediction: weighted recent form, home/away, goal diff, clean sheets, head-to-head."""
+def predict_score(home, away, team_stats, head_to_head, team_players=None):
+    """Prediction: team form, head-to-head, and top player stats."""
     home_form = team_stats.get(home, {"scored": [1], "conceded": [1], "home_scored": [1], "home_conceded": [1], "away_scored": [1], "away_conceded": [1]})
     away_form = team_stats.get(away, {"scored": [1], "conceded": [1], "home_scored": [1], "home_conceded": [1], "away_scored": [1], "away_conceded": [1]})
-    # Weighted last 5 matches
     home_scored = home_form["home_scored"][-5:]
     home_conceded = home_form["home_conceded"][-5:]
     away_scored = away_form["away_scored"][-5:]
     away_conceded = away_form["away_conceded"][-5:]
     weights = np.linspace(1, 2, 5)[-len(home_scored):]
-    # Goal difference
     home_goal_diff = [s-c for s, c in zip(home_form["scored"][-5:], home_form["conceded"][-5:])]
     away_goal_diff = [s-c for s, c in zip(away_form["scored"][-5:], away_form["conceded"][-5:])]
-    # Clean sheets
     home_clean_sheets = sum(1 for c in home_conceded if c == 0)
     away_clean_sheets = sum(1 for c in away_conceded if c == 0)
-    # Head-to-head (last 3, weighted)
     h2h_key = tuple(sorted([home, away]))
     h2h_matches = head_to_head.get(h2h_key, [])[-3:]
     h2h_home = [m[2] for m in h2h_matches if m[0] == home]
     h2h_away = [m[3] for m in h2h_matches if m[1] == away]
     h2h_weights = np.linspace(1, 2, len(h2h_home)) if h2h_home else None
-    # Calculate prediction
+    # Player stats: use top 3 scorers' goals for each team
+    home_top_goals = 0
+    away_top_goals = 0
+    if team_players:
+        home_players = team_players.get(home, [])
+        away_players = team_players.get(away, [])
+        home_top_goals = sum([p["goals"] for p in home_players[:3]])
+        away_top_goals = sum([p["goals"] for p in away_players[:3]])
     # Scale up all components to allow higher scores
     scale = 1.7
     home_pred = scale * (
-        0.35 * weighted_mean(home_form["scored"][-5:], weights) +
-        0.20 * weighted_mean(home_scored, weights) +
+        0.30 * weighted_mean(home_form["scored"][-5:], weights) +
+        0.18 * weighted_mean(home_scored, weights) +
         0.10 * weighted_mean(home_goal_diff, weights) +
         0.10 * home_clean_sheets +
-        0.15 * (weighted_mean(h2h_home, h2h_weights) if h2h_home else weighted_mean(home_scored, weights))
+        0.12 * (weighted_mean(h2h_home, h2h_weights) if h2h_home else weighted_mean(home_scored, weights)) +
+        0.20 * home_top_goals / 10
     )
     away_pred = scale * (
-        0.35 * weighted_mean(away_form["scored"][-5:], weights) +
-        0.20 * weighted_mean(away_scored, weights) +
+        0.30 * weighted_mean(away_form["scored"][-5:], weights) +
+        0.18 * weighted_mean(away_scored, weights) +
         0.10 * weighted_mean(away_goal_diff, weights) +
         0.10 * away_clean_sheets +
-        0.15 * (weighted_mean(h2h_away, h2h_weights) if h2h_away else weighted_mean(away_scored, weights))
+        0.12 * (weighted_mean(h2h_away, h2h_weights) if h2h_away else weighted_mean(away_scored, weights)) +
+        0.20 * away_top_goals / 10
     )
-    # Draw logic: if teams are very close, increase draw probability
     if abs(home_pred - away_pred) < 0.3:
         home_pred = away_pred = round((home_pred + away_pred) / 2)
     return int(round(home_pred)), int(round(away_pred))
@@ -179,6 +207,7 @@ class SoccerScorePredictor:
 
         self.fixtures = []
         self.team_stats, self.head_to_head = fetch_team_recent_stats()
+        self.team_players = fetch_team_player_stats()
         self.load_fixtures()
 
     def load_fixtures(self):
