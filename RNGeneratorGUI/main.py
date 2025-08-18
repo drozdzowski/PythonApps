@@ -8,36 +8,45 @@ import random
 
 class RandomNumberGeneratorGUI:
     def __init__(self, root):
+        import random
         self.root = root
         self.root.title("Random Number Generator")
-        self.root.configure(bg="#f0f0f0")
+        self.pastel_bg = self.random_pastel()
+        self.root.configure(bg=self.pastel_bg)
 
-        self.title_label = tk.Label(root, text="Random Number Generator", font=("Arial", 20, "bold"), bg="#f0f0f0")
+        self.title_label = tk.Label(root, text="Random Number Generator", font=("Arial", 20, "bold"), bg=self.pastel_bg)
         self.title_label.pack(pady=10)
 
-        self.input_frame = tk.Frame(root, bg="#f0f0f0")
+        self.input_frame = tk.Frame(root, bg=self.pastel_bg)
         self.input_frame.pack(pady=10)
 
-        self.min_label = tk.Label(self.input_frame, text="Min Value:", font=("Arial", 12), bg="#f0f0f0")
+        self.min_label = tk.Label(self.input_frame, text="Min Value:", font=("Arial", 12), bg=self.pastel_bg)
         self.min_label.grid(row=0, column=0, padx=5, pady=5)
-        self.min_entry = tk.Entry(self.input_frame, font=("Arial", 12), width=8)
+        self.min_entry = tk.Entry(self.input_frame, font=("Arial", 12), width=8, bg=self.random_pastel())
         self.min_entry.insert(0, "1")
         self.min_entry.grid(row=0, column=1, padx=5, pady=5)
 
-        self.max_label = tk.Label(self.input_frame, text="Max Value:", font=("Arial", 12), bg="#f0f0f0")
+        self.max_label = tk.Label(self.input_frame, text="Max Value:", font=("Arial", 12), bg=self.pastel_bg)
         self.max_label.grid(row=1, column=0, padx=5, pady=5)
-        self.max_entry = tk.Entry(self.input_frame, font=("Arial", 12), width=8)
+        self.max_entry = tk.Entry(self.input_frame, font=("Arial", 12), width=8, bg=self.random_pastel())
         self.max_entry.insert(0, "1000")
         self.max_entry.grid(row=1, column=1, padx=5, pady=5)
 
-        self.generate_button = tk.Button(root, text="Generate", font=("Arial", 12), command=self.generate_number, bg="#e0e0e0")
+        self.generate_button = tk.Button(root, text="Generate", font=("Arial", 12), command=self.generate_number, bg=self.random_pastel())
         self.generate_button.pack(pady=10)
 
-        self.result_label = tk.Label(root, text="Result: ", font=("Arial", 16), bg="#f0f0f0")
+        self.result_label = tk.Label(root, text="Result: ", font=("Arial", 16), bg=self.pastel_bg)
         self.result_label.pack(pady=10)
 
-        self.copy_button = tk.Button(root, text="Copy Result", font=("Arial", 10), command=self.copy_result, bg="#e0e0e0")
+        self.copy_button = tk.Button(root, text="Copy Result", font=("Arial", 10), command=self.copy_result, bg=self.random_pastel())
         self.copy_button.pack(pady=5)
+
+    def random_pastel(self):
+        import random
+        r = random.randint(180, 255)
+        g = random.randint(180, 255)
+        b = random.randint(180, 255)
+        return f'#{r:02x}{g:02x}{b:02x}'
 
     def generate_number(self):
         try:
