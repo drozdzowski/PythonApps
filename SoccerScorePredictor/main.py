@@ -1,3 +1,4 @@
+import math
 """
 Soccer Score Predictor - English Premier League
 """
@@ -38,6 +39,7 @@ def fetch_team_recent_stats():
     url = "https://api.football-data.org/v4/competitions/PL/matches?status=FINISHED"
     headers = {"X-Auth-Token": API_KEY}
     team_stats = {}
+    head_to_head = {}
     try:
         resp = requests.get(url, headers=headers)
         if resp.status_code == 200:
@@ -49,58 +51,113 @@ def fetch_team_recent_stats():
                 away_score = match["score"]["fullTime"]["away"]
                 # Home team stats
                 if home not in team_stats:
-                    team_stats[home] = {"scored": [], "conceded": []}
+                    team_stats[home] = {"scored": [], "conceded": [], "home_scored": [], "home_conceded": [], "away_scored": [], "away_conceded": []}
                 team_stats[home]["scored"].append(home_score)
                 team_stats[home]["conceded"].append(away_score)
+                team_stats[home]["home_scored"].append(home_score)
+                team_stats[home]["home_conceded"].append(away_score)
                 # Away team stats
                 if away not in team_stats:
-                    team_stats[away] = {"scored": [], "conceded": []}
+                    team_stats[away] = {"scored": [], "conceded": [], "home_scored": [], "home_conceded": [], "away_scored": [], "away_conceded": []}
                 team_stats[away]["scored"].append(away_score)
                 team_stats[away]["conceded"].append(home_score)
+                team_stats[away]["away_scored"].append(away_score)
+                team_stats[away]["away_conceded"].append(home_score)
+                # Head-to-head
+                h2h_key = tuple(sorted([home, away]))
+                if h2h_key not in head_to_head:
+                    head_to_head[h2h_key] = []
+                head_to_head[h2h_key].append((home, away, home_score, away_score))
         else:
             print("Error fetching past results:", resp.text)
     except Exception as e:
         print("Exception fetching past results:", e)
-    return team_stats
+    return team_stats, head_to_head
 
 # --- Prediction Model (Simple) ---
-def predict_score(home, away, team_stats):
-    """Predict score using average goals scored/conceded in last 5 matches."""
-    home_scored = team_stats.get(home, {"scored": [1]} )["scored"][-5:]
-    home_conceded = team_stats.get(home, {"conceded": [1]} )["conceded"][-5:]
-    away_scored = team_stats.get(away, {"scored": [1]} )["scored"][-5:]
-    away_conceded = team_stats.get(away, {"conceded": [1]} )["conceded"][-5:]
-    home_pred = (np.mean(home_scored) + np.mean(away_conceded)) / 2
-    away_pred = (np.mean(away_scored) + np.mean(home_conceded)) / 2
+def safe_mean(arr, default=1):
+    m = np.mean(arr) if arr else default
+    return m if not math.isnan(m) else default
+
+def predict_score(home, away, team_stats, head_to_head):
+    """Predict score using team form, home/away performance, and head-to-head results."""
+    home_form = team_stats.get(home, {"scored": [1], "conceded": [1], "home_scored": [1], "home_conceded": [1]})
+    away_form = team_stats.get(away, {"scored": [1], "conceded": [1], "away_scored": [1], "away_conceded": [1]})
+    home_scored = home_form["home_scored"][-5:]
+    home_conceded = home_form["home_conceded"][-5:]
+    away_scored = away_form["away_scored"][-5:]
+    away_conceded = away_form["away_conceded"][-5:]
+    h2h_key = tuple(sorted([home, away]))
+    h2h_matches = head_to_head.get(h2h_key, [])[-3:]
+    h2h_home = [m[2] for m in h2h_matches if m[0] == home]
+    h2h_away = [m[3] for m in h2h_matches if m[1] == away]
+    home_pred = 0.5 * safe_mean(home_form["scored"][-5:]) + 0.3 * safe_mean(home_scored) + 0.2 * (safe_mean(h2h_home) if h2h_home else safe_mean(home_scored))
+    away_pred = 0.5 * safe_mean(away_form["scored"][-5:]) + 0.3 * safe_mean(away_scored) + 0.2 * (safe_mean(h2h_away) if h2h_away else safe_mean(away_scored))
     return int(round(home_pred)), int(round(away_pred))
 
 # --- GUI ---
 class SoccerScorePredictor:
     def __init__(self, root):
-        """Initialize Soccer Score Predictor GUI."""
+        import random
         self.root = root
         self.root.title("Soccer Score Predictor - EPL")
-        self.root.geometry("500x400")
-        self.root.configure(bg="#eaf6fb")
-        self.title = tk.Label(root, text="EPL Soccer Score Predictor", font=("Arial", 18, "bold"), bg="#eaf6fb")
+        self.root.geometry("650x500")
+        pastel_colors = ["#eaf6fb", "#ffe4e1", "#e0ffe0", "#fffbe0", "#e0eaff", "#fbeaf6"]
+        bg_color = random.choice(pastel_colors)
+        self.root.configure(bg=bg_color)
+
+        self.title = tk.Label(root, text="EPL Soccer Score Predictor", font=("Arial", 20, "bold"), bg=bg_color)
         self.title.pack(pady=10)
-        self.refresh_btn = tk.Button(root, text="Fetch Fixtures", command=self.load_fixtures)
+
+        main_frame = tk.Frame(root, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        left_frame = tk.Frame(main_frame, bg=bg_color)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        right_frame = tk.Frame(main_frame, bg=bg_color)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        self.refresh_btn = tk.Button(left_frame, text="Fetch Fixtures", command=self.load_fixtures, font=("Arial", 12))
         self.refresh_btn.pack(pady=5)
-        self.fixtures_list = tk.Listbox(root, font=("Arial", 12), width=40, height=10)
-        self.fixtures_list.pack(pady=10)
-        self.predict_btn = tk.Button(root, text="Predict Score", command=self.predict_selected)
+
+        self.fixtures_list = tk.Listbox(left_frame, font=("Arial", 12), width=35, height=15)
+        self.fixtures_list.pack(pady=10, fill=tk.BOTH, expand=True)
+
+        self.predict_btn = tk.Button(left_frame, text="Predict Score", command=self.predict_selected, font=("Arial", 12, "bold"), bg="#b3e6ff")
         self.predict_btn.pack(pady=5)
-        self.result_label = tk.Label(root, text="", font=("Arial", 14), bg="#eaf6fb")
+
+        self.result_label = tk.Label(left_frame, text="", font=("Arial", 16, "bold"), bg=bg_color, fg="#333")
         self.result_label.pack(pady=10)
+
+        # Team stats summary panel
+        self.stats_title = tk.Label(right_frame, text="Team Stats (Last 5 Matches)", font=("Arial", 14, "bold"), bg=bg_color)
+        self.stats_title.pack(pady=5)
+        self.stats_text = tk.Text(right_frame, font=("Arial", 12), width=30, height=15, bg="#f7f7fa", fg="#222")
+        self.stats_text.pack(pady=10, fill=tk.BOTH, expand=True)
+        self.stats_text.config(state=tk.DISABLED)
+
         self.fixtures = []
-        self.team_stats = fetch_team_recent_stats()
+        self.team_stats, self.head_to_head = fetch_team_recent_stats()
         self.load_fixtures()
 
     def load_fixtures(self):
         self.fixtures_list.delete(0, tk.END)
-        self.fixtures = fetch_epl_fixtures()
+        all_fixtures = fetch_epl_fixtures()
+        # Only show the next upcoming game for each team
+        seen_teams = set()
+        unique_fixtures = []
+        for home, away in all_fixtures:
+            if home not in seen_teams and away not in seen_teams:
+                unique_fixtures.append((home, away))
+                seen_teams.add(home)
+                seen_teams.add(away)
+        self.fixtures = unique_fixtures
         for home, away in self.fixtures:
             self.fixtures_list.insert(tk.END, f"{home} vs {away}")
+        self.result_label.config(text="")
+        self.stats_text.config(state=tk.NORMAL)
+        self.stats_text.delete(1.0, tk.END)
+        self.stats_text.config(state=tk.DISABLED)
 
     def predict_selected(self):
         idx = self.fixtures_list.curselection()
@@ -108,8 +165,23 @@ class SoccerScorePredictor:
             messagebox.showwarning("Select Match", "Please select a fixture.")
             return
         home, away = self.fixtures[idx[0]]
-        home_score, away_score = predict_score(home, away, self.team_stats)
+        home_score, away_score = predict_score(home, away, self.team_stats, self.head_to_head)
         self.result_label.config(text=f"Prediction: {home} {home_score} - {away_score} {away}")
+        # Show team stats summary
+        self.stats_text.config(state=tk.NORMAL)
+        self.stats_text.delete(1.0, tk.END)
+        home_stats = self.team_stats.get(home, {"scored": [], "conceded": [], "home_scored": [], "away_scored": []})
+        away_stats = self.team_stats.get(away, {"scored": [], "conceded": [], "home_scored": [], "away_scored": []})
+        def stats_str(name, stats):
+            scored = stats["scored"][-5:]
+            home_scored = stats["home_scored"][-5:] if "home_scored" in stats else []
+            away_scored = stats["away_scored"][-5:] if "away_scored" in stats else []
+            conceded = stats["conceded"][-5:]
+            return f"{name}\n  Scored: {scored}\n  Home Scored: {home_scored}\n  Away Scored: {away_scored}\n  Conceded: {conceded}\n"
+        self.stats_text.insert(tk.END, stats_str(home, home_stats))
+        self.stats_text.insert(tk.END, "\n")
+        self.stats_text.insert(tk.END, stats_str(away, away_stats))
+        self.stats_text.config(state=tk.DISABLED)
 
 if __name__ == "__main__":
     root = tk.Tk()
