@@ -75,24 +75,65 @@ def fetch_team_recent_stats():
     return team_stats, head_to_head
 
 # --- Prediction Model (Simple) ---
+
 def safe_mean(arr, default=1):
     m = np.mean(arr) if arr else default
     return m if not math.isnan(m) else default
 
+def weighted_mean(arr, weights=None, default=1):
+    if not arr:
+        return default
+    arr = np.array(arr)
+    if weights is None:
+        weights = np.linspace(1, 2, len(arr))  # More weight to recent
+    weights = np.array(weights)
+    if len(weights) != len(arr):
+        weights = np.ones(len(arr))
+    m = np.average(arr, weights=weights)
+    return m if not math.isnan(m) else default
+
 def predict_score(home, away, team_stats, head_to_head):
-    """Predict score using team form, home/away performance, and head-to-head results."""
-    home_form = team_stats.get(home, {"scored": [1], "conceded": [1], "home_scored": [1], "home_conceded": [1]})
-    away_form = team_stats.get(away, {"scored": [1], "conceded": [1], "away_scored": [1], "away_conceded": [1]})
+    """Improved prediction: weighted recent form, home/away, goal diff, clean sheets, head-to-head."""
+    home_form = team_stats.get(home, {"scored": [1], "conceded": [1], "home_scored": [1], "home_conceded": [1], "away_scored": [1], "away_conceded": [1]})
+    away_form = team_stats.get(away, {"scored": [1], "conceded": [1], "home_scored": [1], "home_conceded": [1], "away_scored": [1], "away_conceded": [1]})
+    # Weighted last 5 matches
     home_scored = home_form["home_scored"][-5:]
     home_conceded = home_form["home_conceded"][-5:]
     away_scored = away_form["away_scored"][-5:]
     away_conceded = away_form["away_conceded"][-5:]
+    weights = np.linspace(1, 2, 5)[-len(home_scored):]
+    # Goal difference
+    home_goal_diff = [s-c for s, c in zip(home_form["scored"][-5:], home_form["conceded"][-5:])]
+    away_goal_diff = [s-c for s, c in zip(away_form["scored"][-5:], away_form["conceded"][-5:])]
+    # Clean sheets
+    home_clean_sheets = sum(1 for c in home_conceded if c == 0)
+    away_clean_sheets = sum(1 for c in away_conceded if c == 0)
+    # Head-to-head (last 3, weighted)
     h2h_key = tuple(sorted([home, away]))
     h2h_matches = head_to_head.get(h2h_key, [])[-3:]
     h2h_home = [m[2] for m in h2h_matches if m[0] == home]
     h2h_away = [m[3] for m in h2h_matches if m[1] == away]
-    home_pred = 0.5 * safe_mean(home_form["scored"][-5:]) + 0.3 * safe_mean(home_scored) + 0.2 * (safe_mean(h2h_home) if h2h_home else safe_mean(home_scored))
-    away_pred = 0.5 * safe_mean(away_form["scored"][-5:]) + 0.3 * safe_mean(away_scored) + 0.2 * (safe_mean(h2h_away) if h2h_away else safe_mean(away_scored))
+    h2h_weights = np.linspace(1, 2, len(h2h_home)) if h2h_home else None
+    # Calculate prediction
+    # Scale up all components to allow higher scores
+    scale = 1.7
+    home_pred = scale * (
+        0.35 * weighted_mean(home_form["scored"][-5:], weights) +
+        0.20 * weighted_mean(home_scored, weights) +
+        0.10 * weighted_mean(home_goal_diff, weights) +
+        0.10 * home_clean_sheets +
+        0.15 * (weighted_mean(h2h_home, h2h_weights) if h2h_home else weighted_mean(home_scored, weights))
+    )
+    away_pred = scale * (
+        0.35 * weighted_mean(away_form["scored"][-5:], weights) +
+        0.20 * weighted_mean(away_scored, weights) +
+        0.10 * weighted_mean(away_goal_diff, weights) +
+        0.10 * away_clean_sheets +
+        0.15 * (weighted_mean(h2h_away, h2h_weights) if h2h_away else weighted_mean(away_scored, weights))
+    )
+    # Draw logic: if teams are very close, increase draw probability
+    if abs(home_pred - away_pred) < 0.3:
+        home_pred = away_pred = round((home_pred + away_pred) / 2)
     return int(round(home_pred)), int(round(away_pred))
 
 # --- GUI ---
@@ -101,7 +142,7 @@ class SoccerScorePredictor:
         import random
         self.root = root
         self.root.title("Soccer Score Predictor - EPL")
-        self.root.geometry("650x500")
+        self.root.geometry("975x750")
         pastel_colors = ["#eaf6fb", "#ffe4e1", "#e0ffe0", "#fffbe0", "#e0eaff", "#fbeaf6"]
         bg_color = random.choice(pastel_colors)
         self.root.configure(bg=bg_color)
@@ -146,6 +187,7 @@ class SoccerScorePredictor:
         # Only show the next upcoming game for each team
         seen_teams = set()
         unique_fixtures = []
+        self.prediction_cache = {}  # Cache predictions for performance
         for home, away in all_fixtures:
             if home not in seen_teams and away not in seen_teams:
                 unique_fixtures.append((home, away))
@@ -153,7 +195,10 @@ class SoccerScorePredictor:
                 seen_teams.add(away)
         self.fixtures = unique_fixtures
         for home, away in self.fixtures:
-            self.fixtures_list.insert(tk.END, f"{home} vs {away}")
+            # Calculate prediction for display and cache
+            home_score, away_score = predict_score(home, away, self.team_stats, self.head_to_head)
+            self.prediction_cache[(home, away)] = (home_score, away_score)
+            self.fixtures_list.insert(tk.END, f"{home} vs {away} ({home_score}-{away_score})")
         self.result_label.config(text="")
         self.stats_text.config(state=tk.NORMAL)
         self.stats_text.delete(1.0, tk.END)
@@ -165,7 +210,8 @@ class SoccerScorePredictor:
             messagebox.showwarning("Select Match", "Please select a fixture.")
             return
         home, away = self.fixtures[idx[0]]
-        home_score, away_score = predict_score(home, away, self.team_stats, self.head_to_head)
+        # Use cached prediction for performance
+        home_score, away_score = self.prediction_cache.get((home, away), predict_score(home, away, self.team_stats, self.head_to_head))
         self.result_label.config(text=f"Prediction: {home} {home_score} - {away_score} {away}")
         # Show team stats summary
         self.stats_text.config(state=tk.NORMAL)
