@@ -1,3 +1,36 @@
+import sys
+import tkinter as tk
+from tkinter import messagebox
+
+# Dependency check for external packages
+missing = []
+try:
+    import requests
+except Exception:
+    requests = None
+    missing.append('requests')
+try:
+    import pandas as pd
+except Exception:
+    pd = None
+    missing.append('pandas')
+try:
+    import numpy as np
+except Exception:
+    np = None
+    missing.append('numpy')
+
+if missing:
+    msg = f"Missing required packages: {', '.join(missing)}\nPlease run: python -m pip install -r requirements.txt"
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror('Missing dependencies', msg)
+        root.destroy()
+    except Exception:
+        print(msg)
+    sys.exit(1)
+
 # --- Fetch Weather Data ---
 # --- Fetch Player Stats ---
 def fetch_team_player_stats():
